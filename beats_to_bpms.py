@@ -1,6 +1,7 @@
 import csv
 import argparse
 from warnings import warn
+# import msdparser  # https://pypi.org/project/msdparser/
 
 
 class BeatsToBPMS(object):
@@ -10,21 +11,64 @@ class BeatsToBPMS(object):
         self.sm_path = sm_path
         self.output_txt_path = output_txt_path
         self.output_beat_markers_bpms_csv_path = output_beat_markers_bpms_csv_path
-        self.samples = samples
+        self.sampling_rate = samples
+        self.input_data = []
+        self.bpms = []
+        self.beat_markers = []
 
     def _verify_inputs(self):
+        """
+        Verify the command-line inputs
+        :return:
+        """
         pass
 
     def read_input_csv(self):
-        pass
+        with open(self.sm_path, "r") as infile:
+            csvread = csv.reader(infile)
+            for row in csvread:
+                self.input_data.append(row)
         
     def convert_beats_to_bpm(self):
-        pass
-        
+        first_beat_samples = int(self.input_data[0][0])  # Need to change if not samples
+        beat_marker = 0
+        last_beat_diff = 0
+        for row in self.input_data[1:]:
+            second_beat_samples = int(row[0]) # CHANGE
+            beat_diff = second_beat_samples - first_beat_samples # CHANGE
+            if last_beat_diff != beat_diff:
+                bpm = self.sampling_rate / beat_diff * 60  # CHANGE
+                self.bpms.append(bpm)
+                self.beat_markers.append(beat_marker)
+            first_beat_samples = second_beat_samples
+            beat_marker += 1
+            last_beat_diff = beat_diff
+
+    def write_output_csv(self):
+        with open(self.output_beat_markers_bpms_csv_path, "w") as outfile:
+            csvwrite = csv.writer(outfile)
+            for beat_marker, bpm in zip(self.beat_markers, self.bpms):
+                csvwrite.writerow([beat_marker, bpm])
+
+    def write_output_txt_oneline(self):
+        """
+        Write out a text file that only contains the one line that you're gonna
+        stick into the Stepmania .sm file (or .ssc).
+
+        Sample output:
+        #BPMS:0.000=132.000,149.000=66.000,173.000=132.000;
+
+        :return:
+        """
+
+        beats_bpms = ["{}={}".format(beat_marker, bpm) for beat_marker, bpm in
+                      zip(self.beat_markers, self.bpms)]
+        stepmania_bpms_out = "#BPMS:" + ",".join(beats_bpms) + ";"
+
+        with open(self.output_txt_path, "w") as outfile:
+            outfile.write(stepmania_bpms_out)
+
     def write_output_sm(self):
-        pass
-        
-    def write_output_txt(self):
         pass
 
 
@@ -40,48 +84,8 @@ def main():
                         help="Specify this if you want a CSV with the beat markers and BPMs")
     parser.add_argument("--samples", help="Use this option if the beat locations are given in samples, "
                                           "and specify the sampling rate in Hz.", type=int)
-    
     args = parser.parse_args()
-    
-    
 
-rows = []
-with open("magellan_cut_beats.csv", "r") as infile:
-    csvread = csv.reader(infile)
-    for row in csvread:
-        rows.append(row)
-        
-SAMPLING_RATE = 48000  # Can get this direct from the magellan_cut.wav too
-
-bpms = []
-beat_markers = []
-first_beat_samples = int(rows[0][0])
-beat_marker = 0
-last_beat_diff = 0
-for row in rows[1:]:
-    second_beat_samples = int(row[0])
-    beat_diff = second_beat_samples - first_beat_samples
-    if last_beat_diff != beat_diff:
-        bpm = SAMPLING_RATE / beat_diff * 60
-        bpms.append(bpm)
-        beat_markers.append(beat_marker)
-        print(beat_marker, bpm)
-    first_beat_samples = second_beat_samples
-    beat_marker += 1
-    last_beat_diff = beat_diff
-    
-with open("magellan_cut_beat_markers_and_bpms.csv", "w") as outfile:
-    csvwrite = csv.writer(outfile)
-    for beat_marker, bpm in zip(beat_markers, bpms):
-        csvwrite.writerow([beat_marker, bpm])
-
-#stepmania_bpms_out = "#BPMS:0.000=132.000,149.000=66.000,173.000=132.000;"
-beats_bpms = ["{}={}".format(beat_marker, bpm) for beat_marker, bpm in zip(beat_markers, bpms)]
-stepmania_bpms_out = "#BPMS:" + ",".join(beats_bpms) + ";"
-print(stepmania_bpms_out)
-        
-with open("magellan_cut_sm_line.txt", "w") as outfile:
-    outfile.write(stepmania_bpms_out)
 
 if __name__ == "__main__":
     main()
