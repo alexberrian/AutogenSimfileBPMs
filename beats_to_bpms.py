@@ -52,7 +52,7 @@ class BeatsToBPMS(object):
                 while not resolved:
                     user_response = input("WARNING: Are you sure you want to overwrite the "
                                           "existing #OFFSET and #BPMS fields in the input simfile {}? "
-                                          "(y/n)".format(self.input_simfile_path))
+                                          "(y/n) ".format(self.input_simfile_path))
                     if user_response.lower() in ["y", "yes"]:
                         resolved = True
                         self.output_simfile_path = self.input_simfile_path
@@ -69,7 +69,7 @@ class BeatsToBPMS(object):
                         user_response = input("WARNING: The output simfile path {} already exists.  "
                                               "Are you sure you want to overwrite the "
                                               "existing #OFFSET and #BPMS fields in this simfile? "
-                                              "(y/n)".format(self.output_simfile_path))
+                                              "(y/n) ".format(self.output_simfile_path))
                         if user_response.lower() in ["y", "yes"]:
                             resolved = True
                         elif user_response.lower() in ["n", "no"]:
