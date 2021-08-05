@@ -183,7 +183,6 @@ class BeatsToBPMS(object):
 
 
 def main():
-    # Will it work to parse here???
     parser = argparse.ArgumentParser()
     parser.add_argument("input_beats_csv_path", help="Path to CSV file containing beat information")
     parser.add_argument("--input_simfile_path", help="Path to input .sm or .ssc file")
