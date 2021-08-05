@@ -1,5 +1,4 @@
 import vamp
-import beats_to_bpms
 import soundfile as sf
 import argparse
 import pathlib
@@ -7,7 +6,7 @@ import sys
 import numpy as np
 
 
-class AudioToBPMs(object):
+class AudioBeatsToBPMs(object):
     PLUGIN_IDENTIFIER = "qm-vamp-plugins:qm-barbeattracker"  # https://vamp-plugins.org/plugin-doc/qm-vamp-plugins.html
 
     def __init__(self, audio: np.ndarray = None, sampling_rate: int = None, input_audio_path=None,
@@ -84,26 +83,35 @@ class AudioToBPMs(object):
             raise ValueError("No audio loaded!")
         print(self.audio.shape)
         beats = [x for x in vamp.process_audio(self.audio, self.sampling_rate, self.plugin_identifier)]
-        print(beats)
+        return self._convert_beats_from_dict_to_list(beats)
+
+    @staticmethod
+    def _convert_beats_from_dict_to_list(beats):
+        return [[beat['timestamp'], beat['label']] for beat in beats]
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("input_audio_path", help="Path to input audio file")
-    parser.add_argument("--input_beats_csv_path", help="Path to input CSV containing beat markers")
-    parser.add_argument("--input_simfile_path", help="Path to input .sm or .ssc file")
-    parser.add_argument("--output_simfile_path", help="Path to input .sm or .ssc file")
-    parser.add_argument("--output_txt_path", help="Output path to text file where #BPMS and #OFFSET lines "
-                                                  "will be written")
-    parser.add_argument("--output_beat_markers_bpms_csv_path",
-                        help="Specify this if you want a CSV with the beat markers and BPMs")
-    parser.add_argument("--samples", help="Use this option if the beat locations are given in samples, "
+    parser.add_argument("--samples", help="Use this option if the input CSV's beat locations are given in samples, "
                                           "and specify the sampling rate in Hz.", type=int)
-    parser.add_argument("--overwrite_input_simfile", help="Use this option to overwrite the existing input simfile",
+    parser.add_argument("--input_simfile_path", help="(OPTIONAL) Path to input .sm or .ssc file for the song whose "
+                                                     "BPMS and OFFSET you are finding")
+    parser.add_argument("--output_simfile_path", help="(OPTIONAL) Path to output .sm or .ssc file where the generated "
+                                                      "#BPMS and #OFFSET lines will be written")
+    parser.add_argument("--input_beats_csv_path", help="(OPTIONAL) Path to input CSV containing beat markers. "
+                                                       "Use this if you have generated beat markers from the "
+                                                       "audio separately (using Sonic Visualiser for example)")
+    parser.add_argument("--output_txt_path", help="(OPTIONAL) Output path to text file where only the "
+                                                  "#BPMS and #OFFSET lines will be written")
+    parser.add_argument("--output_beat_markers_bpms_csv_path",
+                        help="(OPTIONAL) Path to output CSV with the beat markers and BPMs")
+    parser.add_argument("--overwrite_input_simfile", help="(OPTIONAL) Use this option to overwrite the "
+                                                          "existing input simfile",
                         action="store_true")
     args = parser.parse_args()
 
-    atbpm = AudioToBPMs(input_audio_path=args.input_audio_path)
+    atbpm = AudioBeatsToBPMs(input_audio_path=args.input_audio_path)
     atbpm.get_beats_from_vamp_plugin()
 
 
