@@ -85,15 +85,14 @@ class AudioBeatsToBPMs(object):
         self.overwrite_input_simfile = overwrite_input_simfile
         self.plugin_identifier = alternate_plugin_identifier if alternate_plugin_identifier is not None else \
                                  self.PLUGIN_IDENTIFIER
+        self._verify_initialization()
+
         self.beats_timestamp_data = BeatsTimestampData()
         self.bpms_data = BPMsData()
         self.offset = 0.
         self.simfile_bpms = None
-        #
-        # if self.input_audio_path is not None:
-        #     self.load_audio_from_path(self.input_audio_path)
 
-    def _verify_inputs(self):
+    def _verify_initialization(self):
         # Override order: Input beats path > input audio array > input audio path
         if self.input_audio_path is not None:
             if not self.input_audio_path.is_file():
@@ -332,6 +331,7 @@ def main():
         pass
 
     atbpm = AudioBeatsToBPMs(input_audio_path=args.input_audio_path)
+    atbpm.load_audio_from_path()
     atbpm.calculate_beats_from_vamp_plugin()
 
 
