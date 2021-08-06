@@ -85,6 +85,7 @@ class AudioBeatsToBPMs(object):
                                  self.PLUGIN_IDENTIFIER
         self.beats_timestamp_data = BeatsTimestampData()
         self.bpms_data = BPMsData()
+        self.offset = 0.
 
         if self.input_audio_path is not None:
             self.load_audio_from_path(self.input_audio_path)
