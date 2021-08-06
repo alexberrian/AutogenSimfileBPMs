@@ -68,14 +68,15 @@ class AudioBeatsToBPMs(object):
     PLUGIN_IDENTIFIER = "qm-vamp-plugins:qm-barbeattracker"  # https://vamp-plugins.org/plugin-doc/qm-vamp-plugins.html
 
     def __init__(self, audio: np.ndarray = None, sampling_rate: int = None, input_audio_path=None,
-                 input_beats_csv_path=None,
+                 input_beats_path=None, input_beats_in_samples=False,
                  input_simfile_path=None, output_simfile_path=None, output_txt_path=None,
                  output_beat_markers_bpms_csv_path=None, overwrite_input_simfile=False,
                  alternate_plugin_identifier=None):
         self.audio = audio
         self.sampling_rate = sampling_rate
         self.input_audio_path = pathlib.Path(input_audio_path) if input_audio_path is not None else None
-        self.input_beats_csv_path = pathlib.Path(input_beats_csv_path) if input_beats_csv_path is not None else None
+        self.input_beats_path = pathlib.Path(input_beats_path) if input_beats_path is not None else None
+        self.input_beats_in_samples = input_beats_in_samples
         self.input_simfile_path = pathlib.Path(input_simfile_path) if input_simfile_path is not None else None
         self.output_simfile_path = pathlib.Path(output_simfile_path) if output_simfile_path is not None else None
         self.output_txt_path = pathlib.Path(output_txt_path) if output_txt_path is not None else None
@@ -88,13 +89,33 @@ class AudioBeatsToBPMs(object):
         self.bpms_data = BPMsData()
         self.offset = 0.
         self.simfile_bpms = None
-
-        if self.input_audio_path is not None:
-            self.load_audio_from_path(self.input_audio_path)
+        #
+        # if self.input_audio_path is not None:
+        #     self.load_audio_from_path(self.input_audio_path)
 
     def _verify_inputs(self):
-        if self.audio is not None and self.input_audio_path is not None:
-            raise ValueError("Ambiguous input, cannot pass both audio and input audio path in initialization")
+        # Override order: Input beats path > input audio array > input audio path
+        if self.input_audio_path is not None:
+            if not self.input_audio_path.is_file():
+                raise ValueError("{} is not a valid file path for the input audio".format(self.input_audio_path))
+        if self.input_beats_path is not None:
+            if not self.input_beats_path.is_file():
+                raise ValueError("{} is not a valid file path for the input beats CSV".format(self.input_beats_path))
+            if self.input_audio_path is not None:
+                warn("WARNING: Will not load audio from {} because you have specified an existing file path {} "
+                     "from which the beat timestamps will be extracted.".format(self.input_audio_path,
+                                                                                self.input_beats_path))
+            if self.audio is not None:
+                warn("WARNING: Will not compute beat timestamps from the input audio, because you have specified "
+                     "an existing file path {} from which the beat timestamps "
+                     "will be extracted.".format(self.input_beats_path))
+        else:  # No input CSV of beats
+            if self.audio is not None and self.input_audio_path is not None:
+                warn("WARNING: Will not load audio from {} because you have passed an audio array in the "
+                     "initialization of this object.".format(self.input_audio_path))
+        if self.audio is None and self.input_audio_path is None and self.input_beats_path is None:
+            raise ValueError("You must do one of the following things: initialize the audio array, "
+                             "set the input audio path, or set the input beats path.")
         if self.overwrite_input_simfile:
             if self.input_simfile_path is None:
                 raise ValueError("Cannot specify --overwrite_input_simfile without --input_simfile_path")
@@ -130,33 +151,6 @@ class AudioBeatsToBPMs(object):
                             print("Stopping program.")
                             sys.exit()
 
-    def read_input_csv(self):
-        timestamp_type: str = 'unset'
-        with open(self.input_beats_csv_path, "r") as infile:
-            read_data = []
-            csvread = csv.reader(infile)
-            row = next(csvread)
-            first_beat_time = float(row[0])
-            if self.sampling_rate is None:  # TODO: THIS NEEDS TO BE CHANGED because audio may be read in too!
-                timestamp_type = 'samples'
-                if first_beat_time > self.MIN_FIRST_BEAT_SEC_FOR_WARN:
-                    warn("WARNING: Your first timestamp {} from the input CSV is at greater than {} seconds. "
-                         "Are you sure the units are in seconds and not samples? "
-                         "If they are samples, please specify the sampling rate using the flag "
-                         "--samples; for instance --samples 48000, or "
-                         "otherwise you will get very inaccurate BPMs.".format(first_beat_time,
-                                                                               self.MIN_FIRST_BEAT_SEC_FOR_WARN))
-            else:
-                if int(first_beat_time) != first_beat_time:
-                    warn("The first beat time {} is detected to be in units of seconds, but you specified the "
-                         "sampling rate, which will not be used in the computation.")
-                    timestamp_type = 'seconds'
-            read_data.append(row)
-            for row in csvread:
-                read_data.append(row)
-            self.beats_timestamp_data = self._convert_beats_data_from_lists_to_BeatsTimestampData(read_data,
-                                                                                                  timestamp_type)
-
     def load_audio_from_path(self, input_audio_path=None):
         if input_audio_path is not None:
             self.input_audio_path = input_audio_path
@@ -178,6 +172,38 @@ class AudioBeatsToBPMs(object):
 
         if return_beats:
             return self.beats_timestamp_data
+
+    def load_beats_from_path(self):
+        if self.input_beats_path is None:
+            raise ValueError("No input beats path specified!")
+        elif not self.input_beats_path.is_file():
+            raise ValueError("Invalid path to input beats file {}".format(self.input_beats_path))
+        else:
+            timestamp_type: str = 'unset'
+            with open(self.input_beats_path, "r") as infile:
+                read_data = []
+                csvread = csv.reader(infile)
+                row = next(csvread)
+                first_beat_time = float(row[0])
+                if not self.input_beats_in_samples:
+                    timestamp_type = 'samples'
+                    if first_beat_time > self.MIN_FIRST_BEAT_SEC_FOR_WARN:
+                        warn("WARNING: Your first timestamp {} from the input CSV is at greater than {} seconds. "
+                             "Are you sure the units are in seconds and not samples? "
+                             "If they are samples, please specify the sampling rate using the flag "
+                             "--samples; for instance --samples 48000, or "
+                             "otherwise you will get very inaccurate BPMs.".format(first_beat_time,
+                                                                                   self.MIN_FIRST_BEAT_SEC_FOR_WARN))
+                else:
+                    if int(first_beat_time) != first_beat_time:
+                        warn("The first beat time {} is detected to be in units of seconds, but you specified the "
+                             "sampling rate, which will not be used in the computation.")
+                        timestamp_type = 'seconds'
+                read_data.append(row)
+                for row in csvread:
+                    read_data.append(row)
+                self.beats_timestamp_data = self._convert_beats_data_from_lists_to_BeatsTimestampData(read_data,
+                                                                                                      timestamp_type)
 
     def convert_timestamps_to_bpms(self):
         if len(self.beats_timestamp_data.beats) == 0:
@@ -282,16 +308,17 @@ class AudioBeatsToBPMs(object):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("input_audio_path", help="Path to input audio file")
-    parser.add_argument("--samples", help="Use this option if the input CSV's beat locations are given in samples, "
-                                          "and specify the sampling rate in Hz.", type=int)
+    parser.add_argument("--input_audio_path", help="Path to input audio file")
+    parser.add_argument("--input_beats_path", help="Path to input CSV file containing beat markers. "
+                                                   "Use this if you have generated beat markers from the "
+                                                   "audio separately (using Sonic Visualiser for example)")
+    parser.add_argument("--input_beats_sampling_rate", help="Use this option if the input CSV's beat locations "
+                                                            "are given in samples, "
+                                                            "and specify the sampling rate in Hz.", type=int)
     parser.add_argument("--input_simfile_path", help="(OPTIONAL) Path to input .sm or .ssc file for the song whose "
                                                      "BPMS and OFFSET you are finding")
     parser.add_argument("--output_simfile_path", help="(OPTIONAL) Path to output .sm or .ssc file where the generated "
                                                       "#BPMS and #OFFSET lines will be written")
-    parser.add_argument("--input_beats_csv_path", help="(OPTIONAL) Path to input CSV containing beat markers. "
-                                                       "Use this if you have generated beat markers from the "
-                                                       "audio separately (using Sonic Visualiser for example)")
     parser.add_argument("--output_txt_path", help="(OPTIONAL) Output path to text file where only the "
                                                   "#BPMS and #OFFSET lines will be written")
     parser.add_argument("--output_beat_markers_bpms_csv_path",
@@ -300,6 +327,9 @@ def main():
                                                           "existing input simfile",
                         action="store_true")
     args = parser.parse_args()
+
+    if args.input_beats_sampling_rate is not None:
+        pass
 
     atbpm = AudioBeatsToBPMs(input_audio_path=args.input_audio_path)
     atbpm.calculate_beats_from_vamp_plugin()
