@@ -7,6 +7,7 @@ import sys
 import numpy as np
 from warnings import warn
 from typing import List
+import simfile
 
 
 class SingleBeatTimestampData(object):
@@ -86,6 +87,7 @@ class AudioBeatsToBPMs(object):
         self.beats_timestamp_data = BeatsTimestampData()
         self.bpms_data = BPMsData()
         self.offset = 0.
+        self.simfile_bpms = None
 
         if self.input_audio_path is not None:
             self.load_audio_from_path(self.input_audio_path)
@@ -235,6 +237,47 @@ class AudioBeatsToBPMs(object):
     @staticmethod
     def _convert_beats_data_from_lists_to_dicts(beats_list: List):
         return [{'timestamp': beat_list[0], 'label': beat_list[1]} for beat_list in beats_list]
+
+    def convert_bpms_to_simfile_format(self):
+        beats_bpms = ["{}={}\n".format(beat_marker, bpm) for beat_marker, bpm in
+                      zip(self.bpms_data.beat_markers, self.bpms_data.bpms)]
+        self.simfile_bpms = ",".join(beats_bpms)
+
+    def write_output_csv(self):
+        with open(self.output_beat_markers_bpms_csv_path, "w") as outfile:
+            csvwrite = csv.writer(outfile)
+            for beat_marker, bpm in zip(self.bpms_data.beat_markers, self.bpms_data.bpms):
+                csvwrite.writerow([beat_marker, bpm])
+
+    def write_output_txt_oneline(self):
+        """
+        Write out a text file that only contains the two lines that you're gonna
+        stick into the Stepmania .sm file (or .ssc).
+
+        Sample output:
+        #OFFSET:-0.0234;
+        #BPMS:0.000=132.000,149.000=66.000,173.000=132.000;
+
+        :return:
+        """
+
+        stepmania_offset_out = "#OFFSET:{};\n".format(self.offset)
+        if self.simfile_bpms is None:
+            self.convert_bpms_to_simfile_format()
+        stepmania_bpms_out = "#BPMS:" + self.simfile_bpms + ";"
+
+        with open(self.output_txt_path, "w") as outfile:
+            outfile.write(stepmania_offset_out)
+            outfile.write(stepmania_bpms_out)
+
+    def write_output_simfile(self):
+        sm = simfile.open(str(self.input_simfile_path))
+        sm.offset = self.offset
+        if self.simfile_bpms is None:
+            self.convert_bpms_to_simfile_format()
+        sm.bpms = self.simfile_bpms
+        with open(self.output_simfile_path, 'w', encoding='utf-8') as outfile:
+            sm.serialize(outfile)
 
 
 def main():
