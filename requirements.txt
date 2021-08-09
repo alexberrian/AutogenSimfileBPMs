@@ -1,5 +1,5 @@
-vamp>=1.1.0
 numpy>=1.21.1
+vamp>=1.1.0
 soundfile>=0.10.3.post1
 simfile>=2.0.0b5
 
