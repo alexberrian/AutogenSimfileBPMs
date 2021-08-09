@@ -66,9 +66,10 @@ class AudioBeatsToBPMs(object):
     SEC_DIFF_TOLERANCE = 1e-8
     MIN_FIRST_BEAT_SEC_FOR_WARN = 10.
     PLUGIN_IDENTIFIER = "qm-vamp-plugins:qm-barbeattracker"  # https://vamp-plugins.org/plugin-doc/qm-vamp-plugins.html
+    RUN_FROM_CANDIDATES = {"audio_input", "audio_path", "beats_path"}
 
     def __init__(self, audio: np.ndarray = None, sampling_rate: int = None, input_audio_path=None,
-                 input_beats_path=None, input_beats_in_samples=False,
+                 input_beats_path=None, input_beats_sampling_rate=0,
                  input_simfile_path=None, output_simfile_path=None, output_txt_path=None,
                  output_beat_markers_bpms_csv_path=None, overwrite_input_simfile=False,
                  alternate_plugin_identifier=None):
@@ -76,7 +77,11 @@ class AudioBeatsToBPMs(object):
         self.sampling_rate = sampling_rate
         self.input_audio_path = pathlib.Path(input_audio_path) if input_audio_path is not None else None
         self.input_beats_path = pathlib.Path(input_beats_path) if input_beats_path is not None else None
-        self.input_beats_in_samples = input_beats_in_samples
+        if input_beats_sampling_rate:
+            self.sampling_rate = input_beats_sampling_rate
+            self.input_beats_in_samples = True
+        else:
+            self.input_beats_in_samples = False
         self.input_simfile_path = pathlib.Path(input_simfile_path) if input_simfile_path is not None else None
         self.output_simfile_path = pathlib.Path(output_simfile_path) if output_simfile_path is not None else None
         self.output_txt_path = pathlib.Path(output_txt_path) if output_txt_path is not None else None
@@ -85,19 +90,21 @@ class AudioBeatsToBPMs(object):
         self.overwrite_input_simfile = overwrite_input_simfile
         self.plugin_identifier = alternate_plugin_identifier if alternate_plugin_identifier is not None else \
                                  self.PLUGIN_IDENTIFIER
-        self._verify_initialization()
+        self.run_from = None
+        self._verify_initialization_and_set_running_order()
 
         self.beats_timestamp_data = BeatsTimestampData()
         self.bpms_data = BPMsData()
         self.offset = 0.
         self.simfile_bpms = None
 
-    def _verify_initialization(self):
+    def _verify_initialization_and_set_running_order(self):
         # Override order: Input beats path > input audio array > input audio path
         if self.input_audio_path is not None:
             if not self.input_audio_path.is_file():
                 raise ValueError("{} is not a valid file path for the input audio".format(self.input_audio_path))
         if self.input_beats_path is not None:
+            self.run_from = "beats_path"
             if not self.input_beats_path.is_file():
                 raise ValueError("{} is not a valid file path for the input beats CSV".format(self.input_beats_path))
             if self.input_audio_path is not None:
@@ -110,11 +117,14 @@ class AudioBeatsToBPMs(object):
                      "will be extracted.".format(self.input_beats_path))
         else:  # No input CSV of beats
             if self.audio is not None and self.input_audio_path is not None:
+                self.run_from = "audio_input"
                 warn("WARNING: Will not load audio from {} because you have passed an audio array in the "
                      "initialization of this object.".format(self.input_audio_path))
-        if self.audio is None and self.input_audio_path is None and self.input_beats_path is None:
-            raise ValueError("You must do one of the following things: initialize the audio array, "
-                             "set the input audio path, or set the input beats path.")
+            elif self.audio is None and self.input_audio_path is not None:
+                self.run_from = "audio_path"
+            else:
+                raise ValueError("You must do one of the following things: initialize the audio array, "
+                                 "set the input audio path, or set the input beats path.")
         if self.overwrite_input_simfile:
             if self.input_simfile_path is None:
                 raise ValueError("Cannot specify --overwrite_input_simfile without --input_simfile_path")
@@ -149,6 +159,9 @@ class AudioBeatsToBPMs(object):
                         elif user_response.lower() in ["n", "no"]:
                             print("Stopping program.")
                             sys.exit()
+        if self.run_from not in self.RUN_FROM_CANDIDATES:
+            raise ValueError("Invalid run configuration {}, must be one of the options "
+                             "'{}'".format(self.run_from, "', '".join(self.RUN_FROM_CANDIDATES)))
 
     def load_audio_from_path(self, input_audio_path=None):
         if input_audio_path is not None:
@@ -162,7 +175,7 @@ class AudioBeatsToBPMs(object):
         self.audio = self.audio.T  # [channels, data]
         print("Audio loaded from {}".format(self.input_audio_path))
 
-    def calculate_beats_from_vamp_plugin(self, return_beats=False):
+    def calculate_beat_timestamps_from_vamp_plugin(self, return_beats=False):
         if self.audio is None:
             raise ValueError("No audio loaded!")
         data = [x for x in vamp.process_audio(self.audio, self.sampling_rate, self.plugin_identifier)]
@@ -172,7 +185,7 @@ class AudioBeatsToBPMs(object):
         if return_beats:
             return self.beats_timestamp_data
 
-    def load_beats_from_path(self):
+    def load_beat_timestamps_from_path(self):
         if self.input_beats_path is None:
             raise ValueError("No input beats path specified!")
         elif not self.input_beats_path.is_file():
@@ -185,7 +198,7 @@ class AudioBeatsToBPMs(object):
                 row = next(csvread)
                 first_beat_time = float(row[0])
                 if not self.input_beats_in_samples:
-                    timestamp_type = 'samples'
+                    timestamp_type = 'seconds'
                     if first_beat_time > self.MIN_FIRST_BEAT_SEC_FOR_WARN:
                         warn("WARNING: Your first timestamp {} from the input CSV is at greater than {} seconds. "
                              "Are you sure the units are in seconds and not samples? "
@@ -198,6 +211,9 @@ class AudioBeatsToBPMs(object):
                         warn("The first beat time {} is detected to be in units of seconds, but you specified the "
                              "sampling rate, which will not be used in the computation.")
                         timestamp_type = 'seconds'
+                        self.input_beats_in_samples = False
+                    else:
+                        timestamp_type = 'samples'
                 read_data.append(row)
                 for row in csvread:
                     read_data.append(row)
@@ -207,7 +223,7 @@ class AudioBeatsToBPMs(object):
     def convert_timestamps_to_bpms(self):
         if len(self.beats_timestamp_data.beats) == 0:
             try:
-                self.calculate_beats_from_vamp_plugin()
+                self.calculate_beat_timestamps_from_vamp_plugin()
             except ValueError:
                 raise ValueError("Beats data is empty; "
                                  "did you load an audio file or an input CSV of beat information?")
@@ -304,6 +320,27 @@ class AudioBeatsToBPMs(object):
         with open(self.output_simfile_path, 'w', encoding='utf-8') as outfile:
             sm.serialize(outfile)
 
+    def run(self):
+        if self.run_from == "audio_path":
+            self.load_audio_from_path()
+            self.calculate_beat_timestamps_from_vamp_plugin()
+        elif self.run_from == "audio_input":
+            self.calculate_beat_timestamps_from_vamp_plugin()
+        elif self.run_from == "beats_path":
+            self.load_beat_timestamps_from_path()
+        elif self.run_from in self.RUN_FROM_CANDIDATES:
+            raise ValueError("Unsupported run_from option {}".format(self.run_from))
+        else:
+            raise ValueError("Invalid run configuration {}, must be one of the options "
+                             "'{}'".format(self.run_from, "', '".join(self.RUN_FROM_CANDIDATES)))
+        self.convert_timestamps_to_bpms()
+        if self.output_simfile_path is not None:
+            self.write_output_simfile()
+        if self.output_txt_path is not None:
+            self.write_output_txt_oneline()
+        if self.output_beat_markers_bpms_csv_path is not None:
+            self.write_output_csv()
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -325,14 +362,26 @@ def main():
     parser.add_argument("--overwrite_input_simfile", help="(OPTIONAL) Use this option to overwrite the "
                                                           "existing input simfile",
                         action="store_true")
+    parser.add_argument("--alternate_plugin_identifier", help="(OPTIONAL) Use an alternate plugin, for example"
+                                                              " 'qm-vamp-plugins:qm-tempotracker'; note, "
+                                                              "the detected beats must be provided in the same format "
+                                                              "as the default plugin used here or there will be an "
+                                                              "error.  "
+                                                              "Default plugin "
+                                                              "used is {}".format(AudioBeatsToBPMs.PLUGIN_IDENTIFIER))
     args = parser.parse_args()
 
     if args.input_beats_sampling_rate is not None:
         pass
 
-    atbpm = AudioBeatsToBPMs(input_audio_path=args.input_audio_path)
-    atbpm.load_audio_from_path()
-    atbpm.calculate_beats_from_vamp_plugin()
+    atbpm = AudioBeatsToBPMs(input_audio_path=args.input_audio_path, input_beats_path=args.input_beats_path,
+                             input_beats_sampling_rate=args.input_beats_sampling_rate,
+                             input_simfile_path=args.input_simfile_path, output_simfile_path=args.output_simfile_path,
+                             output_txt_path=args.output_txt_path,
+                             output_beat_markers_bpms_csv_path=args.output_beat_markers_bpms_csv_path,
+                             overwrite_input_simfile=args.overwrite_input_simfile,
+                             alternate_plugin_identifier=args.alternate_plugin_identifier)
+    atbpm.run()
 
 
 if __name__ == "__main__":
